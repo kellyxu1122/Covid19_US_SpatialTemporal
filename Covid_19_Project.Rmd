@@ -1,0 +1,467 @@
+---
+title: "The spread of COVID-19 in the US"
+
+output:
+  pdf_document:
+    toc: TRUE
+    toc_depth: 3
+    latex_engine: xelatex
+  html_document:
+    toc: no
+    df_print: paged
+header-includes:
+- \usepackage{caption}
+- \captionsetup[figure]{font=scriptsize}
+- \usepackage{sectsty}
+- \allsectionsfont{\color{ForestGreen}}
+mainfont: Avenir Book
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, messages = FALSE)
+
+library (tidyverse)
+
+```
+
+\newpage 
+
+
+
+
+You will do this using three datasets. One contains a time series of COVID-19 cases (which you will use to create your dependent variable). The other two contain data that can be used for potential predictors: Google mobility data by county (also a time series) and demographic and other information on individual counties (static across time).
+
+
+
+
+# Your data
+
+You have three datasets for this task. Two time-series datasets: the first is the daily number of new cases of COVID-19 in each county in the United States from January 2020 to May 2022, and the other tracks daily changes in mobility in each county from February 2020 to May 2022. You also have a set of stationary data on other features for each county, including demographic, economic and climate characteristics. 
+
+The first of these datasets is the file containing information on new confirmed COVID-19 cases in the US, by county. These data are sourced from the Johns Hopkins dataset, available [here](https://github.com/CSSEGISandData). 
+
+\vspace{6mm}
+
+```{r load and clean confirmed case data by county, eval = FALSE}
+
+# load data
+
+confirmed.cases.data <- read.csv("https://raw.githubusercontent.com/
+                                 CSSEGISandData/COVID-19/master/csse_covid_19_data/
+                                 csse_covid_19_time_series/
+                                 time_series_covid19_confirmed_US.csv")
+
+# load packages
+
+library(tidyr)
+library(DataCombine)
+
+
+# clean data
+
+confirmed.cases.data2 <- confirmed.cases.data %>%
+  dplyr::rename(state = Province_State,
+                county = Admin2) %>% 
+  dplyr::select(-UID, -iso2, -iso3, -code3,
+                -Lat, -Long_, -Combined_Key, -Country_Region) %>% 
+    gather(date, confirmed.cases,-state,-county,-FIPS) %>%
+  dplyr::mutate(date = gsub('X', '', date), 
+                date = as.Date(as.character(date), "%m.%d.%y"),
+                county_state = paste0(county, ', ', state)) %>%
+  arrange(county_state, date) %>%
+  dplyr::mutate(lag = slide(.,
+                                  Var = 'confirmed.cases', 
+                                  NewVar = 'new',
+                                  GroupVar = 'county_state', 
+                                  slideBy = -1)[,'new'],
+                new.cases = confirmed.cases - lag)
+
+
+## calculate rolling averages and remove non-states
+
+covid.smooth.data_county <- confirmed.cases.data2 %>%
+    dplyr::group_by(county_state, date) %>% 
+    dplyr::summarise(new.cases = sum(new.cases)) %>%
+      dplyr::group_by(county_state) %>% 
+    dplyr::mutate(cases_14days = zoo::rollmean(new.cases, 
+                                               k = 14, fill = 0)) %>% 
+  dplyr::ungroup() %>% 
+  mutate() %>% 
+  merge(confirmed.cases.data2 %>% 
+          dplyr::select(county_state, date, county, state)) %>% 
+  filter(!state %in% c('American Samoa', 
+                       'Diamond Princess',
+                       'Grand Princess',
+                       'Guam',
+                       'Northern Mariana Islands',
+                       'Puerto Rico',
+                       'Virgin Islands'))
+
+```
+
+\vspace{6mm}
+
+
+The next dataset is Google mobility data. This shows how mobility patterns have changed in different US counties, and can be obtained with the code: 
+
+\vspace{6mm}
+
+```{r load google mobility data, eval=FALSE}
+
+google.mobility <- read.csv('https://www.gstatic.com/covid19/mobility/
+                            Global_Mobility_Report.csv') %>%
+  filter(country_region == 'United States')
+
+```
+
+\vspace{6mm}
+
+This is a large file and many people struggle to download it, so I have saved the csv file in the Data folder in the canvas module for this lab. 
+
+The documentation for this can be found [here](https://www.google.com/covid19/mobility/data_documentation.html?hl=en). The county-level variable is called `sub_region_2` in this dataset. 
+
+The rest of your predictors can be found in this file here:
+
+\vspace{6mm}
+
+```{r load additional predictor data, eval=FALSE}
+
+county.data <- read.csv('https://raw.githubusercontent.com/JieYingWu/
+COVID-19_US_County-level_Summaries/master/data/counties.csv')
+
+```
+
+\vspace{6mm}
+
+The codebook for these data can be found [here](https://github.com/JieYingWu/COVID-19_US_County-level_Summaries/blob/master/data/list_of_columns.md). Additional information on these data are available [here](https://arxiv.org/pdf/2004.00756.pdf). 
+
+\vspace{6mm}
+
+# The cleaned file
+
+I conducted some additional cleaning and rolled these into the file *covid.data_cleaned.Rdata*. There is a lot here and you can just run your analysis on these data if you want. Or you can use the syntax below to add additional variables to the dataset and your analysis. 
+
+The cleaned file contains: 
+
+
+*COVID-19 data*
+
+You can use any of these variables as your dependent variable in your analysis, or transform them as you wish.  
+
+- `new.cases` - The number of new daily cases
+- `cases_14days` - The rolling 14 day average of new cases
+- `new.cases.lag` - A one-day lag of new cases 
+
+
+*Date and location data*
+
+- `date` - The date of the observation
+- `county` - The county in which the observation was taken
+- `state` - The state in which the observation was taken
+- `county_state` - The combined county and state in which the observation was taken
+
+
+*Demographic data (this is stationary and does not change by date)*
+
+- `total.population` - The total population of the county
+- `pop.density` - The population density of the county (per square mile)
+- `housing.density` - The density (per square mile) of housing units
+- `age.65.plus` - The share of the population that is aged 65 and older
+- `pcnt.university` - The share of the population with a university education
+- `pcnt.less.than.high.school` - The share of the population that did not complete high school or obtain further education
+- `avg.hhold.size` - The mean size of households in the county
+- `transit.scores` - How well a county is served by public transit
+- `median.income` - Estimated median household income in 2018
+
+
+*Climate data (this is stationary and does not change by date)*
+
+I think these are self explanatory.
+
+- `avg.dec.tem`
+- `avg.jan.temp`
+- `avg.feb.temp`
+- `avg.winter.temp`
+
+
+*Healthcare resource data (this is stationary and does not change by date)*
+
+- `icu.beds` - Number of ICU beds per county
+- `active.physicians` - Active Physicians per 100,000 Population, 2018
+- `active.patient.care.physicians` - Total Active Patient Care Physicians per 100,000 Population, 2018
+               
+
+*Mobility data*
+
+- `mobility.transit` - Mobility trends for places like public transport hubs such as subway, bus, and train stations. Counties with no public transport have been scored zero
+- `mobility.workplaces` - Mobility trends for places of work
+- `workplaces.lag14` - A 14 day lag for this
+- `mobility.grocery` - Mobility trends for places like grocery markets, food warehouses, farmers markets, specialty food shops, drug stores, and pharmacies
+
+
+\vspace{6mm}
+
+
+## How these data were cleaned and combined
+
+Here is the code used to clean and combine these data:
+
+
+\vspace{6mm}
+
+
+```{r recoding data, eval = FALSE}
+
+# patterns for cleaning county names
+
+patterns <- c(' Borough| Census Area| County| Parish| city')
+
+
+# covid case data 
+
+covid.data <- covid.smooth.data_county %>% 
+  
+  # county data
+
+left_join(county.data %>% 
+            
+            # grab file with full state names 
+  
+  left_join(read.csv('Data/fips concordance.csv') %>% 
+              dplyr::select(State = Alpha.code, 
+                            state_full = Name)) %>%
+         dplyr::mutate(county = gsub(patterns, '', Area_Name),
+                       county_state = paste0(county, ', ', state_full)) %>% 
+    
+    dplyr::select(county_state,
+                  pop.density = Density.per.square.mile.of.land.area...Population,
+                  age.65.plus = Total_age65plus,
+                  total.population = POP_ESTIMATE_2018,
+                  median.income = MEDHHINC_2018,
+                  avg.hhold.size = Total.households..Average.household.size,
+                  avg.dec.temp = Dec.Temp.AVG...F,
+                  avg.jan.temp = Jan.Temp.AVG...F,
+                  avg.feb.temp = Feb.Temp.AVG...F,
+                  icu.beds = ICU.Beds,
+                  active.physicians = Active.Physicians.per.100000.Population.2018..AAMC.,
+                  active.patient.care.physicians = Total.Active.Patient.Care.Physicians.per.100000.Population.2018..AAMC.,
+                  pcnt.university = Percent.of.adults.with.a.bachelor.s.degree.or.higher.2014.18,
+                  pcnt.less.than.high.school = Percent.of.adults.with.less.than.a.high.school.diploma.2014.18,
+                  housing.density = Density.per.square.mile.of.land.area...Housing.units,
+                  transit.scores = transit_scores...population.weighted.averages.aggregated.from.town.city.level.to.county)) %>%
+    
+    
+  merge(google.mobility %>% 
+          dplyr::mutate(county = gsub(patterns, '', sub_region_2),
+                        county_state = paste0(county, ', ', sub_region_1),
+                        date = as.Date(date),
+                        mobility.transit = ifelse(is.na(transit_stations_percent_change_from_baseline), 0,
+                                   transit_stations_percent_change_from_baseline)) %>% 
+  
+  dplyr::select(county_state,
+                date,
+                mobility.transit,
+                mobility.workplaces = workplaces_percent_change_from_baseline,
+                mobility.grocery = grocery_and_pharmacy_percent_change_from_baseline)) %>% 
+  
+  # convert to rates
+  
+  mutate(new.cases = new.cases / (total.population / 100000),
+         icu.beds = icu.beds / (total.population / 100000),
+         age.65.plus = age.65.plus / total.population,
+         avg.winter.temp = (avg.dec.temp + avg.jan.temp + avg.feb.temp) / 3)
+
+
+# lag new cases
+
+new.cases.rate.lagged <- DataCombine::slide(covid.data,
+                                     Var = 'new.cases', 
+                                     NewVar = 'new.cases.lag',
+                                     GroupVar = 'county_state', 
+                                     slideBy = -1) 
+
+# lag workplace mobility 
+
+workplace.lag14 <- DataCombine::slide(covid.data,
+                            Var = 'mobility.workplaces', 
+                            NewVar = 'workplaces.lag14',
+                            GroupVar = 'county_state', 
+                            slideBy = -14)
+
+
+# combine 
+
+covid.data <- covid.data %>% 
+  
+  merge(new.cases.rate.lagged %>% 
+            dplyr::select(county_state, date, 
+                        new.cases.lag)) %>% 
+  
+    merge(workplace.lag14 %>% 
+            dplyr::select(county_state, date, 
+                        workplaces.lag14))
+
+
+
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+
+# Assuming your data frame is called "data" with columns:
+# - date (in yyyy-mm-dd format)
+# - county
+# - new.cases
+# - mobility.workplaces
+
+# First, ensure date is properly formatted
+data$date <- as.Date(data$date)
+
+# Compute correlation between new.cases and mobility.workplaces for each county
+# with error handling for counties without complete pairs
+county_correlations <- data %>%
+  # Group by county
+  group_by(county) %>%
+  # Filter to ensure we have enough observations before calculating
+  filter(sum(!is.na(new.cases) & !is.na(mobility.workplaces)) > 1) %>%
+  # Calculate correlation for each county that has data
+  summarize(
+    correlation = cor(new.cases, mobility.workplaces, use = "complete.obs"),
+    n_observations = sum(!is.na(new.cases) & !is.na(mobility.workplaces)),
+    p_value = tryCatch(
+      cor.test(new.cases, mobility.workplaces, use = "complete.obs")$p.value,
+      error = function(e) NA
+    )
+  ) %>%
+  # Rank by correlation value (highest to lowest)
+  arrange(desc(correlation))
+
+# Add rank column
+county_correlations <- county_correlations %>%
+  mutate(rank = row_number())
+
+# View the results
+print(county_correlations)
+
+# Print summary statistics
+cat("Counties with sufficient data for correlation:", nrow(county_correlations), "\n")
+cat("Counties skipped due to insufficient data:", length(unique(data$county)) - nrow(county_correlations), "\n")
+cat("Range of correlations:", min(county_correlations$correlation, na.rm = TRUE), 
+    "to", max(county_correlations$correlation, na.rm = TRUE), "\n")
+
+# To visualize the results with a histogram of correlations
+if(nrow(county_correlations) > 0) {
+  hist(county_correlations$correlation, 
+       main = "Distribution of County-Level Correlations",
+       xlab = "Correlation between New Cases and Workplace Mobility", 
+       breaks = 20)
+  
+  # Print top and bottom 10 counties by correlation
+  cat("\nTop 10 counties with highest correlation:\n")
+  print(head(county_correlations, 10))
+  
+  cat("\nBottom 10 counties with lowest correlation:\n")
+  print(tail(county_correlations, 10))
+}
+
+# Optional: Create a plot of top and bottom counties
+if(nrow(county_correlations) >= 20) {
+  # Get top and bottom 10 counties
+  top_bottom <- rbind(
+    head(county_correlations, 10),
+    tail(county_correlations, 10)
+  )
+  
+  # Create a horizontal bar plot
+  par(mar = c(5, 10, 4, 2)) # Increase left margin for county names
+  barplot(top_bottom$correlation, 
+          names.arg = top_bottom$county, 
+          horiz = TRUE, 
+          las = 1, # Make labels horizontal
+          main = "Counties with Highest and Lowest Correlations",
+          xlab = "Correlation Coefficient")
+  abline(v = 0, lty = 2) # Add vertical line at zero
+}
+```
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Step 1: Get the population density for each county
+# Since pop.density is static per county, we'll take the first value for each county
+county_pop_density <- data %>%
+  group_by(county) %>%
+  slice(1) %>%  # Take the first row for each county
+  select(county, pop.density) %>%
+  ungroup()
+
+# Step 2: Join the population density data with our correlation results
+correlation_with_density <- county_correlations %>%
+  left_join(county_pop_density, by = "county")
+
+# Step 3: Check for missing values before performing regression
+correlation_with_density <- correlation_with_density %>%
+  filter(!is.na(correlation) & !is.na(pop.density))
+
+# Step 4: Run the linear regression
+model <- lm(correlation ~ pop.density, data = correlation_with_density)
+
+# Step 5: Summarize the regression results
+summary_result <- summary(model)
+print(summary_result)
+
+# Extract key statistics
+r_squared <- summary_result$r.squared
+p_value <- summary_result$coefficients[2,4]  # p-value for the pop.density coefficient
+slope <- summary_result$coefficients[2,1]    # coefficient/slope for pop.density
+
+cat("\nR-squared:", r_squared, "\n")
+cat("p-value for population density:", p_value, "\n")
+cat("Slope coefficient:", slope, "\n")
+
+# Step 6: Visualize the relationship with a scatter plot
+ggplot(correlation_with_density, aes(x = pop.density, y = correlation)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", color = "blue") +
+  labs(
+    title = "Relationship Between Population Density and COVID/Mobility Correlation",
+    x = "Population Density",
+    y = "Correlation between New Cases and Workplace Mobility",
+    caption = paste("R² =", round(r_squared, 3), ", p-value =", round(p_value, 4))
+  ) +
+  theme_minimal()
+
+# Step 7: Check for outliers in population density that might skew results
+# Create log-transformed version if population density is right-skewed
+correlation_with_density$log_pop_density <- log10(correlation_with_density$pop.density + 1)
+
+# Run regression with log-transformed population density
+log_model <- lm(correlation ~ log_pop_density, data = correlation_with_density)
+log_summary <- summary(log_model)
+log_r_squared <- log_summary$r.squared
+log_p_value <- log_summary$coefficients[2,4]
+
+cat("\nLog-transformed model:\n")
+cat("R-squared:", log_r_squared, "\n")
+cat("p-value for log population density:", log_p_value, "\n")
+
+# Visualize with log-transformed x-axis
+ggplot(correlation_with_density, aes(x = log_pop_density, y = correlation)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(
+    title = "Relationship Between Log Population Density and COVID/Mobility Correlation",
+    x = "Log10(Population Density + 1)",
+    y = "Correlation between New Cases and Workplace Mobility",
+    caption = paste("R² =", round(log_r_squared, 3), ", p-value =", round(log_p_value, 4))
+  ) +
+  theme_minimal()
+```
+
+
+
